@@ -18,7 +18,7 @@
   <h1>My Clipper</h1>
   <p>1. Pick a video from your Chromebook.</p>
   <input type="file" id="file" accept="video/*">
-    <p>Or paste a direct video link (ends in .mp4 or .webm):</p>
+  <p>Or paste a direct video link (ends in .mp4 or .webm):</p>
   <input type="url" id="url" placeholder="https://example.com/video.mp4">
   <button id="load">Load link</button>
   <video id="video" controls playsinline></video>
@@ -36,16 +36,21 @@
   </select>
   <label>Crop left/right <input type="range" id="position" min="0" max="100" value="50"></label>
 
+  <p>Captions (optional). One per line: start-end text, using the video's seconds.</p>
+  <textarea id="captions" rows="4" style="width:100%;font-size:16px" placeholder="0-3 Wait for it...&#10;3-7 No way!"></textarea>
+
   <p>4. Make the clip. Keep this tab open and visible while it records.</p>
   <button id="make" disabled>Make clip</button>
   <p id="status"></p>
   <canvas id="canvas"></canvas>
+  <div id="clips"></div>
   <p><a id="download" hidden>Download clip</a></p>
 
 <script>
 const $ = id => document.getElementById(id);
 const video = $("video"), canvas = $("canvas"), ctx = canvas.getContext("2d");
 let audioCtx, audioOut;
+let clipCount = 0;
 
 $("file").onchange = () => {
   const file = $("file").files[0];
@@ -54,6 +59,7 @@ $("file").onchange = () => {
   $("download").hidden = true;
   $("status").textContent = "";
 };
+
 $("load").onclick = () => {
   const url = $("url").value.trim();
   if (!url) return;
@@ -63,6 +69,7 @@ $("load").onclick = () => {
   video.crossOrigin = "anonymous";
   video.src = url;
 };
+
 video.onloadedmetadata = () => {
   $("start").value = 0;
   $("end").value = Math.min(10, video.duration).toFixed(1);
@@ -99,6 +106,36 @@ function drawFrame() {
     }
   }
   ctx.drawImage(video, x, y, cropW, cropH, 0, 0, canvas.width, canvas.height);
+  drawCaption();
+}
+
+function drawCaption() {
+  for (const line of $("captions").value.split("\n")) {
+    const m = line.match(/^\s*([\d.]+)\s*-\s*([\d.]+)\s+(.+)/);
+    if (!m || video.currentTime < Number(m[1]) || video.currentTime >= Number(m[2])) continue;
+
+    const size = Math.round(canvas.width / 16);
+    ctx.font = "bold " + size + "px Arial";
+    ctx.textAlign = "center";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = size / 5;
+    ctx.strokeStyle = "black";
+    ctx.fillStyle = "white";
+
+    // break long captions into several rows
+    const rows = [""];
+    for (const word of m[3].trim().split(/\s+/)) {
+      const test = (rows[rows.length - 1] + " " + word).trim();
+      if (ctx.measureText(test).width > canvas.width * 0.9 && rows[rows.length - 1]) rows.push(word);
+      else rows[rows.length - 1] = test;
+    }
+    rows.forEach((row, i) => {
+      const y = canvas.height * 0.8 - (rows.length - 1 - i) * size * 1.2;
+      ctx.strokeText(row, canvas.width / 2, y);
+      ctx.fillText(row, canvas.width / 2, y);
+    });
+    break;
+  }
 }
 
 $("make").onclick = async () => {
@@ -146,10 +183,12 @@ $("make").onclick = async () => {
   recorder.onstop = () => {
     const ext = type.startsWith("video/mp4") ? "mp4" : "webm";
     const blob = new Blob(chunks, { type: type });
-    const link = $("download");
+    const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = "clip." + ext;
-    link.hidden = false;
+    clipCount++;
+    link.download = "clip-" + clipCount + "." + ext;
+    link.textContent = "Download " + link.download + " (" + start + "s to " + end.toFixed(1) + "s)";
+    $("clips").append(link, document.createElement("br"));
     $("status").textContent = "Done! Your clip is ready.";
     $("make").disabled = false;
     $("file").disabled = false;
