@@ -1,1 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Clipper</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #111; color: #eee; max-width: 700px; margin: auto; padding: 16px; }
+  video, canvas { display: block; max-width: 100%; max-height: 360px; margin: 12px auto; background: #000; }
+  button, select, input { font-size: 16px; margin: 4px; padding: 8px; }
+  button { background: #7c3aed; color: white; border: 0; border-radius: 6px; cursor: pointer; }
+  button:disabled { background: #555; }
+  input[type=number] { width: 90px; }
+  a { color: #a78bfa; font-size: 18px; }
+</style>
+</head>
+<body>
+  <h1>My Clipper</h1>
+  <p>1. Pick a video from your Chromebook.</p>
+  <input type="file" id="file" accept="video/*">
+  <video id="video" controls playsinline></video>
 
+  <p>2. Pause where you want the clip to start or end, then press a button.</p>
+  <button id="setStart">Set start</button>
+  <input type="number" id="start" value="0" min="0" step="0.1"> seconds<br>
+  <button id="setEnd">Set end</button>
+  <input type="number" id="end" value="10" min="0" step="0.1"> seconds
+
+  <p>3. Pick a shape.</p>
+  <select id="shape">
+    <option value="original">Original</option>
+    <option value="vertical">Vertical 9:16 (TikTok / Shorts)</option>
+  </select>
+  <label>Crop left/right <input type="range" id="position" min="0" max="100" value="50"></label>
+
+  <p>4. Make the clip. Keep this tab open and visible while it records.</p>
+  <button id="make" disabled>Make clip</button>
+  <p id="status"></p>
+  <canvas id="canvas"></canvas>
+  <p><a id="download" hidden>Download clip</a></p>
+
+<script>
+const $ = id => document.getElementById(id);
+const video = $("video"), canvas = $("canvas"), ctx = canvas.getContext("2d");
+let audioCtx, audioOut;
+
+$("file").onchange = () => {
+  const file = $("file").files[0];
+  if (!file) return;
+  video.src = URL.createObjectURL(file);
+  $("download").hidden = true;
+  $("status").textContent = "";
+};
+
+video.onloadedmetadata = () => {
+  $("start").value = 0;
+  $("end").value = Math.min(10, video.duration).toFixed(1);
+  $("make").disabled = false;
+};
+
+video.onerror = () => {
+  $("status").textContent = "Chrome cannot play this file. Try an MP4 or WebM video.";
+  $("make").disabled = true;
+};
+
+$("setStart").onclick = () => $("start").value = video.currentTime.toFixed(1);
+$("setEnd").onclick = () => $("end").value = video.currentTime.toFixed(1);
+
+function setupAudio() {
+  if (audioCtx) return;
+  audioCtx = new AudioContext();
+  const source = audioCtx.createMediaElementSource(video);
+  audioOut = audioCtx.createMediaStreamDestination();
+  source.connect(audioOut);             // sound into the clip
+  source.connect(audioCtx.destination); // sound to your speakers
+}
+
+function drawFrame() {
+  const w = video.videoWidth, h = video.videoHeight;
+  let cropW = w, cropH = h, x = 0, y = 0;
+  if ($("shape").value === "vertical") {
+    if (w / h > 9 / 16) {
+      cropW = h * 9 / 16;
+      x = (w - cropW) * $("position").value / 100;
+    } else {
+      cropH = w * 16 / 9;
+      y = (h - cropH) / 2;
+    }
+  }
+  ctx.drawImage(video, x, y, cropW, cropH, 0, 0, canvas.width, canvas.height);
+}
+
+$("make").onclick = async () => {
+  const start = Number($("start").value);
+  const end = Math.min(Number($("end").value), video.duration);
+  if (!(start >= 0 && end > start)) {
+    $("status").textContent = "End must be later than start.";
+    return;
+  }
+
+  $("make").disabled = true;
+  $("file").disabled = true;
+  $("download").hidden = true;
+  $("status").textContent = "Recording...";
+  setupAudio();
+  await audioCtx.resume();
+
+  if ($("shape").value === "vertical") {
+    canvas.width = 720;
+    canvas.height = 1280;
+  } else {
+    // shrink very large videos to 1080p size, keeping even numbers
+    const scale = Math.min(1, 1920 / Math.max(video.videoWidth, video.videoHeight));
+    canvas.width = Math.round(video.videoWidth * scale / 2) * 2;
+    canvas.height = Math.round(video.videoHeight * scale / 2) * 2;
+  }
+
+  // jump to the start point and wait until we get there
+  video.pause();
+  await new Promise(done => {
+    video.onseeked = done;
+    video.currentTime = start;
+  });
+  drawFrame();
+
+  const stream = canvas.captureStream(30);
+  audioOut.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+
+  const type = ["video/mp4;codecs=avc1.640028,mp4a.40.2", "video/webm;codecs=vp9,opus", "video/webm"]
+    .find(t => MediaRecorder.isTypeSupported(t));
+  const recorder = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 5000000 });
+  const chunks = [];
+  recorder.ondataavailable = e => chunks.push(e.data);
+
+  recorder.onstop = () => {
+    const ext = type.startsWith("video/mp4") ? "mp4" : "webm";
+    const blob = new Blob(chunks, { type: type });
+    const link = $("download");
+    link.href = URL.createObjectURL(blob);
+    link.download = "clip." + ext;
+    link.hidden = false;
+    $("status").textContent = "Done! Your clip is ready.";
+    $("make").disabled = false;
+    $("file").disabled = false;
+  };
+
+  recorder.start();
+  await video.play();
+
+  (function loop() {
+    drawFrame();
+    if (video.currentTime >= end || video.ended) {
+      video.pause();
+      recorder.stop();
+    } else {
+      requestAnimationFrame(loop);
+    }
+  })();
+};
+</script>
+</body>
+</html>
