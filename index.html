@@ -208,5 +208,49 @@ $("make").onclick = async () => {
   })();
 };
 </script>
+<script>
+const autoButton = document.createElement("button");
+autoButton.textContent = "Auto captions";
+$("captions").after(autoButton);
+let transcriber;
+
+autoButton.onclick = async () => {
+  const start = Number($("start").value);
+  const end = Math.min(Number($("end").value), video.duration);
+  if (!video.src || !(end > start)) {
+    $("status").textContent = "Load a video and set start and end first.";
+    return;
+  }
+  autoButton.disabled = true;
+  $("make").disabled = true;
+  try {
+    $("status").textContent = "Loading caption tool (slow the first time)...";
+    if (!transcriber) {
+      const { pipeline } = await import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.0.0");
+      transcriber = await pipeline("automatic-speech-recognition", "Xenova/whisper-tiny.en");
+    }
+
+    $("status").textContent = "Listening... this can take a while.";
+    const data = await (await fetch(video.src)).arrayBuffer();
+    const decoder = new AudioContext({ sampleRate: 16000 });
+    const audio = await decoder.decodeAudioData(data);
+    decoder.close();
+    const part = audio.getChannelData(0).slice(start * 16000, end * 16000);
+
+    const result = await transcriber(part, { return_timestamps: true, chunk_length_s: 30, stride_length_s: 5 });
+    $("captions").value = result.chunks.map(c => {
+      const from = start + c.timestamp[0];
+      const to = c.timestamp[1] == null ? end : start + c.timestamp[1];
+      return from.toFixed(1) + "-" + to.toFixed(1) + " " + c.text.trim();
+    }).join("\n");
+    $("status").textContent = "Captions added. Fix any mistakes, then click Make clip.";
+  } catch (error) {
+    console.error(error);
+    $("status").textContent = "Auto captions failed: " + error.message;
+  }
+  autoButton.disabled = false;
+  $("make").disabled = false;
+};
+</script>
 </body>
 </html>
