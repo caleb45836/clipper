@@ -18,6 +18,9 @@
   <h1>My Clipper</h1>
   <p>1. Pick a video from your Chromebook.</p>
   <input type="file" id="file" accept="video/*">
+    <p>Or paste a direct video link (ends in .mp4 or .webm):</p>
+  <input type="url" id="url" placeholder="https://example.com/video.mp4">
+  <button id="load">Load link</button>
   <video id="video" controls playsinline></video>
 
   <p>2. Pause where you want the clip to start or end, then press a button.</p>
@@ -51,7 +54,15 @@ $("file").onchange = () => {
   $("download").hidden = true;
   $("status").textContent = "";
 };
-
+$("load").onclick = () => {
+  const url = $("url").value.trim();
+  if (!url) return;
+  $("make").disabled = true;
+  $("download").hidden = true;
+  $("status").textContent = "";
+  video.crossOrigin = "anonymous";
+  video.src = url;
+};
 video.onloadedmetadata = () => {
   $("start").value = 0;
   $("end").value = Math.min(10, video.duration).toFixed(1);
